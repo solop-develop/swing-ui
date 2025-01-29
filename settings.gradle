@@ -1,0 +1,17 @@
+rootProject.name = 'swing-ui'
+include "adempiere-solop"
+project(':adempiere-solop').projectDir = file('../adempiere-solop')
+include "adempiere-solop:base"
+project(':adempiere-solop:base').projectDir = file('../adempiere-solop/base')
+include "adempiere-solop:cashflow"
+project(':adempiere-solop:cashflow').projectDir = file('../adempiere-solop/cashflow')
+include "adempiere-solop:jasperreports"
+project(':adempiere-solop:jasperreports').projectDir = file('../adempiere-solop/jasperreports')
+include "adempiere-solop:point-of-sales"
+project(':adempiere-solop:point-of-sales').projectDir = file('../adempiere-solop/point-of-sales')
+include "adempiere-solop:production"
+project(':adempiere-solop:production').projectDir = file('../adempiere-solop/production')
+include "adempiere-solop:request"
+project(':adempiere-solop:request').projectDir = file('../adempiere-solop/request')
+include "adempiere-solop:solop_libs"
+project(':adempiere-solop:solop_libs').projectDir = file('../adempiere-solop/solop_libs')
