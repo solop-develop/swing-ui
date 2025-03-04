@@ -35,11 +35,11 @@ import java.util.logging.Level;
  *  <li>Implement Reverse Accrual, ommit createCostDetail and implement reverseIt for match_Inv of cancelled documents
  *  https://github.com/adempiere/adempiere/issues/1918
  */
-public class Match
+public class MatchAmount
 {
 
 	/**	Logger			*/
-	private static CLogger log = CLogger.getCLogger(Match.class);
+	private static CLogger log = CLogger.getCLogger(MatchAmount.class);
 
 	/** Match Options           */
 	private String[] m_matchOptions = new String[] {
@@ -58,9 +58,10 @@ public class Match
 	private static final int		I_Line = 4;
 	private static final int		I_Product = 5;
 	private static final int		I_QTY = 6;
-	private static final int		I_MATCHED = 7;
-	private static final int        I_Org = 8; //JAVIER 
-	
+	private static final int		I_Amt = 7;
+	private static final int		I_MATCHED = 8;
+	private static final int        I_Org = 9; //JAVIER
+
 
 
 	private StringBuffer    m_sql = null;
@@ -96,7 +97,7 @@ public class Match
 	/**
 	 *  Search Button Pressed - Fill xMatched
 	 */
-	protected IMiniTable cmd_search(IMiniTable xMatchedTable, int display, String matchToString, Integer Product, Integer Vendor, Timestamp from, Timestamp to, boolean IsSOTrx, boolean matched)
+	protected IMiniTable cmd_search(IMiniTable xMatchedTable, int display, String matchToString, Integer Product, Integer Vendor, Integer Organization, Integer Project, Timestamp from, Timestamp to, boolean IsSOTrx, boolean matched)
 	{
 		//  ** Create SQL **
 		//int display = matchFrom.getSelectedIndex();
@@ -123,10 +124,21 @@ public class Match
 			m_sql.append(" AND hdr.C_BPartner_ID=").append(Vendor);
 		}
 
+		//  Organization
+		if (Organization != null)
+		{
+			m_sql.append(" AND hdr.AD_Org_ID=").append(Organization);
+		}
+
+		//  Project
+		if (Project != null)
+		{
+			m_sql.append(" AND hdr.C_Project_ID=").append(Project);
+		}
+
 		if (IsSOTrx){
 			m_sql.append(" AND hdr.IsSOTrx='Y'");
 		} else m_sql.append(" AND hdr.IsSOTrx='N'");
-
 		//  Date
 		//Timestamp from = (Timestamp)dateFrom.getValue();
 		//Timestamp to = (Timestamp)dateTo.getValue();
@@ -159,6 +171,9 @@ public class Match
 		KeyNamePair lineMatched = (KeyNamePair)xMatchedTable.getValueAt(matchedRow, I_Line);
 		KeyNamePair Product = (KeyNamePair)xMatchedTable.getValueAt(matchedRow, I_Product);
 
+		MProduct prod = new MProduct(Env.getCtx(), Product.getKey(), null);
+		MUOM uom = (MUOM) prod.getC_UOM();
+
 		double totalQty = m_xMatched.doubleValue();
 
 		//  Matched To
@@ -169,8 +184,8 @@ public class Match
 			{
 				//  need to be the same product
 				KeyNamePair ProductCompare = (KeyNamePair)xMatchedToTable.getValueAt(row, I_Product);
-				if (Product.getKey() != ProductCompare.getKey())
-					continue;
+				//if (Product.getKey() != ProductCompare.getKey())
+				//	continue;
 
 				KeyNamePair lineMatchedTo = (KeyNamePair)xMatchedToTable.getValueAt(row, I_Line);
 
@@ -179,7 +194,7 @@ public class Match
 				if (matchMode == MODE_NOTMATCHED)
 					qty = ((Double)xMatchedToTable.getValueAt(row, I_QTY)).doubleValue();	//  doc
 				qty -= ((Double)xMatchedToTable.getValueAt(row, I_MATCHED)).doubleValue();  //  matched
-				if (qty > totalQty)
+				if (qty > totalQty && !uom.getUOMSymbol().equalsIgnoreCase("AMT"))
 					qty = totalQty;
 				totalQty -= qty;
 
@@ -205,7 +220,7 @@ public class Match
 				//  Create it
 				String innerTrxName = Trx.createTrxName("Match");
 				Trx innerTrx = Trx.get(innerTrxName, true);
-				if (createMatchRecord(invoice, M_InOutLine_ID, Line_ID, new BigDecimal(qty), innerTrxName))
+				if (createMatchRecord(invoice, M_InOutLine_ID, Line_ID, new BigDecimal(qty), false, innerTrxName))
 					innerTrx.commit();
 				else
 					innerTrx.rollback();
@@ -221,7 +236,7 @@ public class Match
 	/**
 	 *  Fill xMatchedTo
 	 */
-	protected IMiniTable cmd_searchTo(IMiniTable xMatchedTable, IMiniTable xMatchedToTable, String displayString, int matchToType, boolean sameBPartner, boolean sameProduct, boolean sameQty, boolean matched, boolean IsSOTrx)
+	protected IMiniTable cmd_searchTo(IMiniTable xMatchedTable, IMiniTable xMatchedToTable, String displayString, int matchToType, boolean sameBPartner, boolean sameProduct, boolean sameQty, boolean matched, Integer Organization, Integer Project, boolean IsSOTrx)
 	{
 		int row = xMatchedTable.getSelectedRow();
 		log.config("Row=" + row);
@@ -245,6 +260,18 @@ public class Match
 			m_sql.append(" AND hdr.C_BPartner_ID=").append(BPartner.getKey());
 		if (sameProduct)
 			m_sql.append(" AND lin.M_Product_ID=").append(Product.getKey());
+
+        //  Organization
+        if (Organization != null)
+        {
+            m_sql.append(" AND hdr.AD_Org_ID=").append(Organization);
+        }
+
+        //  Project
+        if (Project != null)
+        {
+            m_sql.append(" AND hdr.C_Project_ID=").append(Project);
+        }
 
 		//  calculate qty
 		double docQty = ((Double)xMatchedTable.getValueAt(row, I_QTY)).doubleValue();
@@ -287,20 +314,21 @@ public class Match
 			m_qtyColumn = "lin.QtyInvoiced";
 			m_sql.append("SELECT hdr.C_Invoice_ID,hdr.DocumentNo, hdr.DateInvoiced, bp.Name,hdr.C_BPartner_ID,"
 				+ " lin.Line,lin.C_InvoiceLine_ID, p.Name,lin.M_Product_ID,"
-				+ " lin.QtyInvoiced,SUM(NVL(mi.Qty,0)), org.Name, hdr.AD_Org_ID "  //JAVIER
+				+ " lin.QtyInvoiced, lin.LineNetAmt,SUM(NVL(mi.Qty * ol.PriceEntered,0)), org.Name, hdr.AD_Org_ID "  //JAVIER
 				+ "FROM C_Invoice hdr"
 				+ " INNER JOIN AD_Org org ON (hdr.AD_Org_ID=org.AD_Org_ID)" //JAVIER
 				+ " INNER JOIN C_BPartner bp ON (hdr.C_BPartner_ID=bp.C_BPartner_ID)"
 				+ " INNER JOIN C_InvoiceLine lin ON (hdr.C_Invoice_ID=lin.C_Invoice_ID)"
+				+ " LEFT JOIN C_OrderLine ol ON lin.C_OrderLine_ID = ol.C_OrderLine_ID"
 				+ " INNER JOIN M_Product p ON (lin.M_Product_ID=p.M_Product_ID)"
 				+ " INNER JOIN C_DocType dt ON (hdr.C_DocType_ID=dt.C_DocType_ID AND (case when hdr.issotrx = 'N' then dt.DocBaseType IN ('API','APC') else dt.DocBaseType IN ('ARI','ARC') end))"
 				+ " FULL JOIN M_MatchInv mi ON (lin.C_InvoiceLine_ID=mi.C_InvoiceLine_ID) "
 				+ "WHERE hdr.DocStatus IN ('CO','CL')");
 			m_groupBy = " GROUP BY hdr.C_Invoice_ID,hdr.DocumentNo,hdr.DateInvoiced,bp.Name,hdr.C_BPartner_ID,"
-				+ " lin.Line,lin.C_InvoiceLine_ID,p.Name,lin.M_Product_ID,lin.QtyInvoiced, org.Name, hdr.AD_Org_ID " //JAVIER
+				+ " lin.Line,lin.C_InvoiceLine_ID,p.Name,lin.M_Product_ID,lin.LineTotalAmt, org.Name, hdr.AD_Org_ID " //JAVIER
 				+ "HAVING "
-				+ (matched ? "0" : "lin.QtyInvoiced")
-				+ "<>SUM(NVL(mi.Qty,0))";
+				+ (matched ? "0" : "lin.LineNetAmt")
+				+ "<>SUM(NVL(mi.Qty * ol.PriceEntered,0))";
 		}
 		else if (display == MATCH_ORDER)
 		{
@@ -308,13 +336,13 @@ public class Match
 			m_qtyColumn = "lin.QtyOrdered";
 			m_sql.append("SELECT hdr.C_Order_ID,hdr.DocumentNo, hdr.DateOrdered, bp.Name,hdr.C_BPartner_ID,"
 				+ " lin.Line,lin.C_OrderLine_ID, p.Name,lin.M_Product_ID,"
-				+ " lin.QtyOrdered,SUM(COALESCE(mo.Qty,0)), org.Name, hdr.AD_Org_ID " //JAVIER
+				+ " lin.QtyOrdered, lin.LineNetAmt,SUM(COALESCE(mo.Qty,0)), org.Name, hdr.AD_Org_ID " //JAVIER
 				+ "FROM C_Order hdr"
 				+ " INNER JOIN AD_Org org ON (hdr.AD_Org_ID=org.AD_Org_ID)" //JAVIER
 				+ " INNER JOIN C_BPartner bp ON (hdr.C_BPartner_ID=bp.C_BPartner_ID)"
 				+ " INNER JOIN C_OrderLine lin ON (hdr.C_Order_ID=lin.C_Order_ID)"
 				+ " INNER JOIN M_Product p ON (lin.M_Product_ID=p.M_Product_ID)"
-				+ " INNER JOIN C_DocType dt ON (hdr.C_DocType_ID=dt.C_DocType_ID AND dt.DocBaseType='POO')"
+				+ " INNER JOIN C_DocType dt ON (hdr.C_DocType_ID=dt.C_DocType_ID AND (case when hdr.issotrx = 'N' then dt.DocBaseType='POO' else dt.DocBaseType='SOO' end)"
 				+ " FULL JOIN M_MatchPO mo ON (lin.C_OrderLine_ID=mo.C_OrderLine_ID) "
 				+ " WHERE " ) ; //[ 1876972 ] Can't match partially matched PO with an unmatched receipt SOLVED BY BOJANA, AGENDA_GM
 			m_linetype = new StringBuffer();
@@ -343,11 +371,12 @@ public class Match
 			m_qtyColumn = "lin.MovementQty";
 			m_sql.append("SELECT hdr.M_InOut_ID,hdr.DocumentNo, hdr.MovementDate, bp.Name,hdr.C_BPartner_ID,"
 				+ " lin.Line,lin.M_InOutLine_ID, p.Name,lin.M_Product_ID,"
-				+ " lin.MovementQty,SUM(NVL(m.Qty,0)),org.Name, hdr.AD_Org_ID " //JAVIER
+				+ " lin.MovementQty, (lin.MovementQty*ol.PriceEntered) AS LineNetAmt,SUM(NVL(m.Qty,0)),org.Name, hdr.AD_Org_ID " //JAVIER
 				+ "FROM M_InOut hdr"
 				+ " INNER JOIN AD_Org org ON (hdr.AD_Org_ID=org.AD_Org_ID)" //JAVIER
 				+ " INNER JOIN C_BPartner bp ON (hdr.C_BPartner_ID=bp.C_BPartner_ID)"
 				+ " INNER JOIN M_InOutLine lin ON (hdr.M_InOut_ID=lin.M_InOut_ID)"
+				+ " INNER JOIN C_OrderLine ol ON (lin.C_OrderLine_ID=ol.C_OrderLine_ID)"
 				+ " INNER JOIN M_Product p ON (lin.M_Product_ID=p.M_Product_ID)"
 				+ " INNER JOIN C_DocType dt ON (hdr.C_DocType_ID = dt.C_DocType_ID AND dt.DocBaseType IN ('MMR','MMS'))"
 				+ " FULL JOIN ")
@@ -355,10 +384,10 @@ public class Match
 				.append(" m ON (lin.M_InOutLine_ID=m.M_InOutLine_ID) "
 				+ "WHERE hdr.DocStatus IN ('CO','CL') and dt.issotrx = '" + SOTrx + "'");
 			m_groupBy = " GROUP BY hdr.M_InOut_ID,hdr.DocumentNo,hdr.MovementDate,bp.Name,hdr.C_BPartner_ID,"
-				+ " lin.Line,lin.M_InOutLine_ID,p.Name,lin.M_Product_ID,lin.MovementQty, org.Name, hdr.AD_Org_ID " //JAVIER
+				+ " lin.Line,lin.M_InOutLine_ID,p.Name,lin.M_Product_ID,ol.priceentered, org.Name, hdr.AD_Org_ID " //JAVIER
 				+ "HAVING "
-				+ (matched ? "0" : "lin.MovementQty")
-				+ "<>SUM(NVL(m.Qty,0))";
+				+ (matched ? "0" : "lin.MovementQty*ol.PriceEntered")
+				+ "<>SUM(NVL(m.Qty*ol.PriceEntered,0))";
 		}
 	//	Log.trace(7, "VMatch.tableInit", m_sql + "\n" + m_groupBy);
 	}   //  tableInit
@@ -397,8 +426,8 @@ public class Match
 	 *  @param trxName 
 	 *  @return true if created
 	 */
-	protected boolean createMatchRecord (boolean invoice, int M_InOutLine_ID, int Line_ID,
-		BigDecimal qty, String trxName)
+	public static boolean createMatchRecord (boolean invoice, int M_InOutLine_ID, int Line_ID,
+		BigDecimal qty, boolean isFromAuto, String trxName)
 	{
 		if (qty.compareTo(Env.ZERO) == 0)
 			return true;
@@ -407,9 +436,9 @@ public class Match
 			+ ", Qty=" + qty);
 		//
 		boolean success = false;
-		boolean createMatchPO = MSysConfig.getBooleanValue("UY_GENERATE_MATCHPO", true, Env.getAD_Client_ID(Env.getCtx()));
 		MInOutLine sLine = new MInOutLine (Env.getCtx(), M_InOutLine_ID, trxName);
-		MInOut hdr = (MInOut) sLine.getM_InOut();//Solop. Nicolas Sarlabos. 01/07/2021. #16334.
+		MInOut hdr = (MInOut) sLine.getM_InOut();//Openup. Nicolas Sarlabos. 12/11/2020. #14955.
+
 		if (invoice)	//	Shipment - Invoice
 		{
 			//	Update Invoice Line
@@ -439,10 +468,16 @@ public class Match
 					match = new MMatchInv(iLine, null, qty);
 				}
 				match.setM_InOutLine_ID(M_InOutLine_ID);
-				match.set_ValueOfColumn("S_Contract_ID", hdr.get_ValueAsInt("S_Contract_ID"));//Solop. Nicolas Sarlabos. 01/07/2021. #16334.
+				match.set_ValueOfColumn("S_Contract_ID", hdr.get_ValueAsInt("S_Contract_ID"));//Openup. Nicolas Sarlabos. 12/11/2020. #14955.
 				match.setDateTrx(new Timestamp(System.currentTimeMillis()));
 				match.setDateAcct(new Timestamp(System.currentTimeMillis()));
-				match.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name"));
+
+				if(isFromAuto){
+					match.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name") + " - Asig. Importe Auto");
+				} else {
+					match.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name"));
+				}
+
 				match.saveEx();
 				if (match.save()) {
 					success = true;
@@ -452,6 +487,7 @@ public class Match
 					if(error != null)
 						log.log(Level.SEVERE, error);
 					//Fin #13433.
+
 				}
 				else
 					log.log(Level.SEVERE, "Inv Match not created: " + match);
@@ -465,12 +501,19 @@ public class Match
 			else
 				success = true;
 			//	Create PO - Invoice Link = corrects PO
-			if (createMatchPO && iLine.getC_OrderLine_ID() != 0 && iLine.getM_Product_ID() != 0)
+			if (iLine.getC_OrderLine_ID() != 0 && iLine.getM_Product_ID() != 0)
 			{
 				MMatchPO matchPO = new MMatchPO(iLine, iLine.getParent().getDateAcct() , qty);
 				matchPO.setC_InvoiceLine_ID(iLine);
 				matchPO.setM_InOutLine_ID(M_InOutLine_ID);
-				matchPO.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name"));
+
+				if(isFromAuto){
+					matchPO.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name") + " - Asig. Importe Auto");
+				} else {
+					matchPO.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name"));
+				}
+
+				matchPO.IsFromMatchAmt = true;//Openup. Nicolas Sarlabos. 23/11/2020. #15031.
 				if (!matchPO.save())
 					log.log(Level.SEVERE, "PO(Inv) Match not created: " + matchPO);
 				if (MClient.isClientAccountingImmediate()) {
@@ -493,9 +536,10 @@ public class Match
 			}
 
 			//	Create PO - Shipment Link
-			if (createMatchPO && sLine.getM_Product_ID() != 0)
+			if (sLine.getM_Product_ID() != 0)
 			{
 				MMatchPO match = new MMatchPO (sLine, null, qty);
+				match.IsFromMatchAmt = true;//Openup. Nicolas Sarlabos. 23/11/2020. #15031.
 				match.setDescription(Env.getContext(Env.getCtx(), "#AD_User_Name"));
 				if (!match.save())
 					log.log(Level.SEVERE, "PO Match not created: " + match);

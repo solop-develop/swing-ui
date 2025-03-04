@@ -13,6 +13,16 @@
  *****************************************************************************/
 package org.compiere.apps.form;
 
+import org.adempiere.core.domains.models.I_C_Invoice;
+import org.adempiere.core.domains.models.I_C_Payment;
+import org.adempiere.exceptions.AdempiereException;
+import org.compiere.minigrid.IDColumn;
+import org.compiere.minigrid.IMiniTable;
+import org.compiere.model.*;
+import org.compiere.process.DocAction;
+import org.compiere.process.ProcessInfo;
+import org.compiere.util.*;
+
 import java.math.BigDecimal;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -20,32 +30,9 @@ import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
+import java.util.Properties;
 import java.util.Vector;
 import java.util.logging.Level;
-
-import org.adempiere.core.domains.models.I_C_Invoice;
-import org.adempiere.core.domains.models.I_C_Payment;
-import org.adempiere.exceptions.AdempiereException;
-import org.compiere.minigrid.IDColumn;
-import org.compiere.minigrid.IMiniTable;
-import org.compiere.model.MAllocationHdr;
-import org.compiere.model.MAllocationLine;
-import org.compiere.model.MInvoice;
-import org.compiere.model.MOrg;
-import org.compiere.model.MPayment;
-import org.compiere.model.MRole;
-import org.compiere.model.MTable;
-import org.compiere.model.PO;
-import org.compiere.process.DocAction;
-import org.compiere.process.ProcessInfo;
-import org.compiere.util.CLogger;
-import org.compiere.util.DB;
-import org.compiere.util.DisplayType;
-import org.compiere.util.Env;
-import org.compiere.util.KeyNamePair;
-import org.compiere.util.Msg;
-import org.compiere.util.TimeUtil;
-import org.compiere.util.Util;
 
 /**
  * 
@@ -66,6 +53,8 @@ public class Allocation
 	private boolean     calculating = false;
 	public int         	currencyId = 0;
 	public int         	bPartnerId = 0;
+	public int 			projectId = 0;//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+	public int 			orderId = 0;//Openup. Nicolas Sarlabos. 03/12/2019. #12922.
 	public int          chargeId = 0;
 	public int         	orgWriteId = 0;
 	public String		description = null;
@@ -79,8 +68,8 @@ public class Allocation
 	public Timestamp 	allocDate = null;
 
 	//  Index	changed if multi-currency
-	private int         paymentPaidIndex = 8;
-	private int         paymentOpenIndex = 7;
+	private int         paymentPaidIndex = 10;
+	private int         paymentOpenIndex = 9;
 	//
 	private int         invoiceOpenIndex = 6;
 	private int         invoiceDiscountIndex = 7;
@@ -104,9 +93,7 @@ public class Allocation
 	private ArrayList<Integer>	bpartnerCheck = new ArrayList<Integer>();
 	
 	/**
-	 * 
-	 * @param tableId
-	 * @param recordId
+	 *
 	 * @throws Exception
 	 */
 	public void dynInit() throws Exception {
@@ -131,6 +118,7 @@ public class Allocation
 			currencyId = getDefaultCurrencyId();
 			//	
 			isSOTrx = isDefaultSOTrx();
+			projectId = getDefaultProjectId();//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
 		} else {
 			bPartnerId = -1;
 			orgId = Env.getAD_Org_ID(Env.getCtx());
@@ -151,7 +139,19 @@ public class Allocation
 		//	
 		return poFrom.get_ValueAsInt(I_C_Payment.COLUMNNAME_C_BPartner_ID);
 	}
-	
+
+	/**
+	 * Get Default BPartner
+	 * @return
+	 */
+	private int getDefaultProjectId() {//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+		if(poFrom == null) {
+			return -1;
+		}
+		//
+		return poFrom.get_ValueAsInt("C_Project_ID");
+	}//Fin #12307.
+
 	/**
 	 * Get Default Org
 	 * @return
@@ -303,7 +303,7 @@ public class Allocation
 			return;
 
 		//	Async BPartner Test
-		Integer key = Integer.valueOf(bPartnerId);
+		Integer key = new Integer(bPartnerId);
 		if (!bpartnerCheck.contains(key))
 		{
 			new Thread()
@@ -325,19 +325,23 @@ public class Allocation
 	 * @param paymentTable
 	 * @return
 	 */
-	public Vector<Vector<Object>> getPaymentData(boolean isMultiCurrency, Object date, IMiniTable paymentTable)
+	public Vector<Vector<Object>> getPaymentData(boolean isMultiCurrency, Object date, IMiniTable paymentTable, BigDecimal currencyRate)
 	{		
 		/********************************
 		 *  Load unallocated Payments
 		 *      1-TrxDate, 2-DocumentNo, (3-Currency, 4-PayAmt,)
 		 *      5-ConvAmt, 6-ConvOpen, 7-Allocated
 		 */
+
+		if(currencyRate == null)
+			currencyRate = Env.ZERO;
+
 		Vector<Vector<Object>> data = new Vector<Vector<Object>>();
 		StringBuffer sql = new StringBuffer("SELECT p.DateTrx,p.DocumentNo,p.C_Payment_ID,"  //  1..3
 				+ "c.ISO_Code,p.PayAmt,"                            //  4..5
-				+ "currencyConvert(p.PayAmt,p.C_Currency_ID,?,?,p.C_ConversionType_ID,p.AD_Client_ID,p.AD_Org_ID) AS ConvertedAmt,"//  6   #1, #2
-				+ "currencyConvert(paymentAvailable(C_Payment_ID),p.C_Currency_ID,?,?,p.C_ConversionType_ID,p.AD_Client_ID,p.AD_Org_ID) AS AvailableAmt,"  //  7   #3, #4
-				+ "p.MultiplierAP, p.IsReceipt, p.AD_Org_ID, p.Description " // 8..11
+				+ "currencyConvert_receipt(p.PayAmt,?,p.C_Currency_ID,?,p.AD_Client_ID,p.AD_Org_ID) AS ConvertedAmt,"//  6   #1, #2
+				+ "currencyConvert_receipt(paymentAvailable(C_Payment_ID),?,p.C_Currency_ID,?,p.AD_Client_ID,p.AD_Org_ID) AS AvailableAmt,"  //  7   #3, #4
+				+ "p.MultiplierAP, p.IsReceipt, p.AD_Org_ID, p.Description, p.c_doctype_id, coalesce(p.c_project_id, 0) as c_project_id " // 8..11 //Openup. Nicolas Sarlabos. 01/07/2019. #12307.
 				+ "FROM C_Payment_v p"		//	Corrected for AP/AR
 				+ " INNER JOIN C_Currency c ON (p.C_Currency_ID=c.C_Currency_ID) "
 				+ "WHERE p.IsAllocated='N' AND p.Processed='Y'"
@@ -353,6 +357,11 @@ public class Allocation
 				&& !apar.equals(APAR_A)) {
 			sql.append(" AND p.IsReceipt= '" + (apar.equals(APAR_R)? "Y": "N" ) +"'" );
 		}
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+		if (projectId != 0 ) {
+			sql.append(" AND p.C_Project_ID=" + projectId);
+		}
+		//Fin #12307.
 		sql.append(" ORDER BY p.DateTrx,p.DocumentNo");
 		
 		// role security
@@ -362,10 +371,10 @@ public class Allocation
 		try
 		{
 			PreparedStatement pstmt = DB.prepareStatement(sql.toString(), null);
-			pstmt.setInt(1, currencyId);
-			pstmt.setTimestamp(2, (Timestamp)date);
-			pstmt.setInt(3, currencyId);
-			pstmt.setTimestamp(4, (Timestamp)date);
+			pstmt.setBigDecimal(1, currencyRate);
+			pstmt.setInt(2, currencyId);
+			pstmt.setBigDecimal(3, currencyRate);
+			pstmt.setInt(4, currencyId);
 			pstmt.setInt(5, bPartnerId);
 			if (!isMultiCurrency)
 				pstmt.setInt(6, currencyId);
@@ -375,16 +384,26 @@ public class Allocation
 				Vector<Object> line = new Vector<Object>();
 				line.add(new IDColumn(rs.getInt("C_Payment_ID"))); 	//  0-C_Payment_ID
 				line.add(rs.getTimestamp("DateTrx"));       	//  1-TrxDate
-				if(rs.getString("IsReceipt").equals("Y"))			//  Ar/Ap
-					line.add("AR");
-				else
-					line.add("AP");
+				//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
 				int orgID = rs.getInt("AD_Org_ID"); 				// 10 AD_Org_ID
 				if (orgID == 0) {
 					line.add("*");
 				} else {
 					line.add((MOrg.get(Env.getCtx(), orgID).getName()));
 				}
+				if(rs.getString("IsReceipt").equals("Y"))			//  Ar/Ap
+					line.add("AR");
+				else
+					line.add("AP");
+
+				int projectID = rs.getInt("C_Project_ID");
+				if(projectID > 0){
+					line.add((MProject.getById(Env.getCtx(), projectID, null)).getName());
+				} else line.add(" ");
+
+				line.add((MDocType.get(Env.getCtx(), rs.getInt("C_DocType_ID")).getPrintName(Env.getAD_Language(Env.getCtx()))));
+				//Fin #12307.
+
 				KeyNamePair pp = new KeyNamePair(rs.getInt("C_Payment_ID"), rs.getString("DocumentNo"));
 				line.add(pp);                       	//  4-DocumentNo
 				line.add(rs.getString("Description"));  //  5-Description
@@ -400,7 +419,7 @@ public class Allocation
 					continue;
 				line.add(available);					//  7/9-ConvOpen/Available
 				line.add(Env.ZERO);						//  8/10-PaymentAmt
-				//
+
 				data.add(line);
 			}
 			rs.close();
@@ -417,11 +436,14 @@ public class Allocation
 	public Vector<String> getPaymentColumnNames(boolean isMultiCurrency)
 	{	
 		//  Header Info
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
 		Vector<String> columnNames = new Vector<String>();
 		columnNames.add(Msg.getMsg(Env.getCtx(), "Select"));
 		columnNames.add(Msg.translate(Env.getCtx(), "Date"));
-		columnNames.add(Msg.getElement(Env.getCtx(), "APAR"));
 		columnNames.add(Msg.getElement(Env.getCtx(), "AD_Org_ID"));
+		columnNames.add(Msg.getElement(Env.getCtx(), "APAR"));
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "C_Project_ID")));
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "C_DocType_ID")));
 		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "DocumentNo")));
 		columnNames.add(Msg.getElement(Env.getCtx(), "Description"));
 		if (isMultiCurrency)
@@ -432,18 +454,23 @@ public class Allocation
 		columnNames.add(Msg.getMsg(Env.getCtx(), "ConvertedAmount"));
 		columnNames.add(Msg.getMsg(Env.getCtx(), "OpenAmt"));
 		columnNames.add(Msg.getMsg(Env.getCtx(), "AppliedAmt"));
+		//Fin #12307.
+
 		return columnNames;
 	}
 	
 	public void setPaymentColumnClass(IMiniTable paymentTable, boolean isMultiCurrency)
 	{
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
 		Vector<String> names = getPaymentColumnNames(isMultiCurrency);
 		int i = 0;
 		paymentTable.setKeyColumnIndex(i);
 		paymentTable.setColumnClass(i, IDColumn.class, true, names.get(i++));         	//  0-Selection
 		paymentTable.setColumnClass(i, Timestamp.class, true, names.get(i++));        	//  1-TrxDate
-		paymentTable.setColumnClass(i, String.class, true, names.get(i++));        		//  Ar/Ap
 		paymentTable.setColumnClass(i, String.class, true, names.get(i++));        		//  Org
+		paymentTable.setColumnClass(i, String.class, true, names.get(i++));        		//  Ar/Ap
+		paymentTable.setColumnClass(i, String.class, false, names.get(i++));      //proyecto
+		paymentTable.setColumnClass(i, String.class, false, names.get(i++));   //tipo de documento
 		paymentTable.setColumnClass(i, String.class, true, names.get(i++));           	//  2-Value
 		paymentTable.setColumnClass(i, String.class, true, names.get(i++));           	//  3-Description
 		if (isMultiCurrency)
@@ -454,13 +481,14 @@ public class Allocation
 		paymentTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));       	//  6-ConvAmt
 		paymentTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));       	//  7-ConvOpen
 		paymentTable.setColumnClass(i, BigDecimal.class, false, names.get(i++));      	//  8-Allocated
+		//Fin #12307.
 		//
-		paymentPaidIndex = isMultiCurrency ? 10 : 8;
+		paymentPaidIndex = isMultiCurrency ? 12 : 10;
 		//  Table UI
 		paymentTable.autoSize();
 	}
 	
-	public Vector<Vector<Object>> getInvoiceData(boolean isMultiCurrency, Object date, IMiniTable invoiceTable)
+	public Vector<Vector<Object>> getInvoiceData(boolean isMultiCurrency, Object date, IMiniTable invoiceTable, BigDecimal currencyRate)
 	{
 		/********************************
 		 *  Load unpaid Invoices
@@ -478,22 +506,32 @@ public class Allocation
 		 FROM C_Invoice_v i INNER JOIN C_Currency c ON (i.C_Currency_ID=c.C_Currency_ID) 
 		 WHERE -- i.IsPaid='N' AND i.Processed='Y' AND i.C_BPartner_ID=1000001
 		 */
+
+		if(currencyRate == null)
+			currencyRate = Env.ZERO;
+
 		Vector<Vector<Object>> data = new Vector<Vector<Object>>();
 		StringBuffer sql = new StringBuffer("SELECT i.DateInvoiced,i.DocumentNo, i.Description, i.C_Invoice_ID," //  1..3
 				+ "c.ISO_Code, (i.GrandTotal*i.MultiplierAP) AS OriginalAmt, "                            //  4..5    Orig Currency
-				+ "currencyConvert(i.GrandTotal*i.MultiplierAP,i.C_Currency_ID,?,?,i.C_ConversionType_ID,i.AD_Client_ID,i.AD_Org_ID) AS ConvertedAmt, " //  6   #1  Converted, #2 Date
-				+ "(currencyConvert(invoiceOpen(C_Invoice_ID,C_InvoicePaySchedule_ID),i.C_Currency_ID,?,?,i.C_ConversionType_ID,i.AD_Client_ID,i.AD_Org_ID)*i.MultiplierAP) AS OpenAmt, "  //  7   #3, #4  Converted Open
-				+ "(currencyConvert(invoiceDiscount"                               //  8       AllowedDiscount
-				+ "(i.C_Invoice_ID,?,C_InvoicePaySchedule_ID),i.C_Currency_ID,?,i.DateInvoiced,i.C_ConversionType_ID,i.AD_Client_ID,i.AD_Org_ID)*i.Multiplier*i.MultiplierAP) AS DiscountAmt,"               //  #5, #6
-				+ "i.MultiplierAP, i.IsSoTrx, i.AD_Org_ID " // 9..11
-				+ "FROM C_Invoice_v i"		//  corrected for CM/Split
+				+ "currencyConvert_receipt(i.GrandTotal*i.MultiplierAP,?,i.C_Currency_ID,?,i.AD_Client_ID,i.AD_Org_ID) AS ConvertedAmt, " //  6   #1  Converted, #2 Date
+				+ "(currencyConvert_receipt(invoiceOpen(C_Invoice_ID,C_InvoicePaySchedule_ID),?,i.C_Currency_ID,?,i.AD_Client_ID,i.AD_Org_ID)*i.MultiplierAP) AS OpenAmt, "  //  7   #3, #4  Converted Open
+				+ "(currencyConvert_receipt(invoiceDiscount(i.C_Invoice_ID,?,C_InvoicePaySchedule_ID),?,i.C_Currency_ID,?,i.AD_Client_ID,i.AD_Org_ID)*i.Multiplier*i.MultiplierAP) AS DiscountAmt,"               //  #5, #6
+				+ "i.MultiplierAP, i.IsSoTrx, i.AD_Org_ID, i.c_doctypetarget_id, coalesce(i.c_project_id, 0) as c_project_id, coalesce(i.c_order_id, 0) as c_order_id" // 9..11 //Openup. Nicolas Sarlabos. 01/07/2019. #12307-#12922.
+				+ " FROM C_Invoice_v i"		//  corrected for CM/Split
 				+ " INNER JOIN C_Currency c ON (i.C_Currency_ID=c.C_Currency_ID) "
-				+ "WHERE i.IsPaid='N' AND i.Processed='Y'"
+				//Openup. Nicolas Sarlabos. 11/04/2019. #11683.
+				+ " INNER JOIN C_DocType d ON (i.C_DocTypeTarget_ID=d.C_DocType_ID) "
+				+ "WHERE i.IsPaid='N' AND i.Processed='Y' AND d.docbasetype NOT IN ('DPI','DRI') "
+				//Fin #11683.
 				+ " AND i.C_BPartner_ID=?");                                            //  #7
 		if (!isMultiCurrency)
 			sql.append(" AND i.C_Currency_ID=?");                                   //  #8
 		if (orgId != 0 ) 
 			sql.append(" AND i.AD_Org_ID=" + orgId);
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+		if (projectId != 0 ) {
+			sql.append(" AND i.C_Project_ID=" + projectId);
+		}//Fin #12307.
 		if (apar != null
 				&& !apar.equals(APAR_A)) {
 			sql.append(" AND i.IsSoTrx='" + (apar.equals(APAR_R)? "Y": "N" ) +"'" );
@@ -507,31 +545,50 @@ public class Allocation
 		try
 		{
 			PreparedStatement pstmt = DB.prepareStatement(sql.toString(), null);
-			pstmt.setInt(1, currencyId);
-			pstmt.setTimestamp(2, (Timestamp)date);
-			pstmt.setInt(3, currencyId);
-			pstmt.setTimestamp(4, (Timestamp)date);
+			pstmt.setBigDecimal(1, currencyRate);
+			pstmt.setInt(2, currencyId);
+			pstmt.setBigDecimal(3, currencyRate);
+			pstmt.setInt(4, currencyId);
 			pstmt.setTimestamp(5, (Timestamp)date);
-			pstmt.setInt(6, currencyId);
-			pstmt.setInt(7, bPartnerId);
+			pstmt.setBigDecimal(6, currencyRate);
+			pstmt.setInt(7, currencyId);
+			pstmt.setInt(8, bPartnerId);
 			if (!isMultiCurrency)
-				pstmt.setInt(8, currencyId);
+				pstmt.setInt(9, currencyId);
 			ResultSet rs = pstmt.executeQuery();
 			while (rs.next())
 			{
 				Vector<Object> line = new Vector<Object>();
 				line.add(new IDColumn(rs.getInt("C_Invoice_ID"))); //  0-C_Invoice_ID
 				line.add(rs.getTimestamp("DateInvoiced"));       //  1-TrxDate
-				if(rs.getString("IsSoTrx").equals("Y"))  //  Ar/Ap
-					line.add("AR");
-				else
-					line.add("AP");
+				//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
 				int orgID = rs.getInt("AD_Org_ID"); 			// 1-AD_Org_ID
 				if (orgID == 0) {
 					line.add("*");
 				} else {
 					line.add((MOrg.get(Env.getCtx(), orgID).getName()));
 				}
+				if(rs.getString("IsSoTrx").equals("Y"))  //  Ar/Ap
+					line.add("AR");
+				else
+					line.add("AP");
+
+				int projectID = rs.getInt("C_Project_ID");
+				if(projectID > 0){
+					line.add((MProject.getById(Env.getCtx(), projectID, null)).getName());
+				} else line.add(" ");
+
+				//Openup. Nicolas Sarlabos. 03/12/2019. #12922.
+				int orderID = rs.getInt("C_Order_ID");
+				if(orderID > 0){
+					MOrder o = new MOrder(Env.getCtx(), orderID, null);
+					line.add(o.getDocumentNo());
+				} else line.add(" ");
+				//Fin #12922.
+
+				line.add((MDocType.get(Env.getCtx(), rs.getInt("C_DocTypeTarget_ID")).getPrintName(Env.getAD_Language(Env.getCtx()))));
+				//Fin #12307.
+
 				KeyNamePair pp = new KeyNamePair(rs.getInt("C_Invoice_ID"), rs.getString("DocumentNo"));
 				line.add(pp);          							//  2-Value
 				line.add(rs.getString("Description"));			//	3-Description
@@ -552,6 +609,7 @@ public class Allocation
 				line.add(Env.ZERO);      						//  7/9-WriteOff
 				line.add(Env.ZERO);								//  8/10-Applied
 				line.add(open);				    				//  9/11-OverUnder
+
 				//	Add when open <> 0 (i.e. not if no conversion rate)
 				if (Env.ZERO.compareTo(open) != 0)
 					data.add(line);
@@ -573,6 +631,33 @@ public class Allocation
 		Vector<String> columnNames = new Vector<String>();
 		columnNames.add(Msg.getMsg(Env.getCtx(), "Select"));
 		columnNames.add(Msg.translate(Env.getCtx(), "Date"));
+		columnNames.add(Msg.getElement(Env.getCtx(), "AD_Org_ID"));
+		columnNames.add(Msg.getElement(Env.getCtx(), "APAR"));
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "C_Project_ID")));
+		columnNames.add(Util.cleanAmp("Orden"));
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "C_DocTypeTarget_ID")));
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "DocumentNo")));
+		columnNames.add(Msg.getElement(Env.getCtx(), "Description"));
+		if (isMultiCurrency)
+		{
+			columnNames.add(Msg.getMsg(Env.getCtx(), "TrxCurrency"));
+			columnNames.add(Msg.translate(Env.getCtx(), "Amount"));
+		}
+		columnNames.add(Msg.getMsg(Env.getCtx(), "ConvertedAmount"));
+		columnNames.add(Msg.getMsg(Env.getCtx(), "OpenAmt"));
+		columnNames.add(Msg.getMsg(Env.getCtx(), "Discount"));
+		columnNames.add(Msg.getMsg(Env.getCtx(), "WriteOff"));
+		columnNames.add(Msg.getMsg(Env.getCtx(), "AppliedAmt"));
+		columnNames.add(Msg.getMsg(Env.getCtx(), "OverUnderAmt"));
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+
+
+		//Fin #12307.
+
+		//  Header Info
+		/*Vector<String> columnNames = new Vector<String>();
+		columnNames.add(Msg.getMsg(Env.getCtx(), "Select"));
+		columnNames.add(Msg.translate(Env.getCtx(), "Date"));
 		columnNames.add(Msg.getElement(Env.getCtx(), "APAR"));
 		columnNames.add(Msg.getElement(Env.getCtx(), "AD_Org_ID"));
 		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "DocumentNo")));
@@ -588,6 +673,10 @@ public class Allocation
 		columnNames.add(Msg.getMsg(Env.getCtx(), "WriteOff"));
 		columnNames.add(Msg.getMsg(Env.getCtx(), "AppliedAmt"));
 		columnNames.add(Msg.getMsg(Env.getCtx(), "OverUnderAmt"));
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "C_DocTypeTarget_ID")));
+		columnNames.add(Util.cleanAmp(Msg.translate(Env.getCtx(), "C_Project_ID")));*/
+		//Fin #12307.
 		return columnNames;
 	}
 	
@@ -597,6 +686,30 @@ public class Allocation
 		int i = 0;
 		invoiceTable.setKeyColumnIndex(i);
 		invoiceTable.setColumnClass(i, IDColumn.class, true, names.get(i++));        //  0-C_Invoice_ID
+		invoiceTable.setColumnClass(i, Timestamp.class, true, names.get(i++));        //  1-TrxDate
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));        //  Org
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));        //  Ar/Ap
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));
+		//Fin #12307.
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));           //  2-Value
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));           //  3-Description
+		if (isMultiCurrency)
+		{
+			invoiceTable.setColumnClass(i, String.class, true, names.get(i++));       //  4-Currency
+			invoiceTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));   //  5-Amt
+		}
+		invoiceTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));       //  6-ConvAmt
+		invoiceTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));       //  7-ConvAmt Open
+		invoiceTable.setColumnClass(i, BigDecimal.class, false, names.get(i++));      //  8-Conv Discount
+		invoiceTable.setColumnClass(i, BigDecimal.class, false, names.get(i++));      //  9-Conv WriteOff
+		invoiceTable.setColumnClass(i, BigDecimal.class, false, names.get(i++));      //  10-Conv Applied
+		invoiceTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));		  //  11-Conv OverUnder
+
+
+		/*invoiceTable.setColumnClass(i, IDColumn.class, true, names.get(i++));        //  0-C_Invoice_ID
 		invoiceTable.setColumnClass(i, Timestamp.class, true, names.get(i++));        //  1-TrxDate
 		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));        //  Ar/Ap
 		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));        //  Org
@@ -613,6 +726,10 @@ public class Allocation
 		invoiceTable.setColumnClass(i, BigDecimal.class, false, names.get(i++));      //  9-Conv WriteOff
 		invoiceTable.setColumnClass(i, BigDecimal.class, false, names.get(i++));      //  10-Conv Applied
 		invoiceTable.setColumnClass(i, BigDecimal.class, true, names.get(i++));		  //  11-Conv OverUnder
+		//Openup. Nicolas Sarlabos. 01/07/2019. #12307.
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));
+		invoiceTable.setColumnClass(i, String.class, true, names.get(i++));*/
+		//Fin #12307.
 		//  Table UI
 		invoiceTable.autoSize();
 	}
@@ -623,12 +740,12 @@ public class Allocation
 	 */
 	public void changeIndexForTables(boolean isMultiCurrency)
 	{
-		paymentOpenIndex = isMultiCurrency ? 9 : 7;
-		invoiceOpenIndex = isMultiCurrency ? 9 : 7;
-		invoiceDiscountIndex = isMultiCurrency ? 10 : 8;
-		invoiceWriteOffIndex = isMultiCurrency ? 11 : 9;
-		invoiceAppliedIndex = isMultiCurrency ? 12 : 10;
-		invoiceOverUnderIndex = isMultiCurrency ? 13 : 11;
+		paymentOpenIndex = isMultiCurrency ? 11 : 9;
+		invoiceOpenIndex = isMultiCurrency ? 12 : 10;
+		invoiceDiscountIndex = isMultiCurrency ? 13 : 11;
+		invoiceWriteOffIndex = isMultiCurrency ? 14 : 12;
+		invoiceAppliedIndex = isMultiCurrency ? 15 : 13;
+		invoiceOverUnderIndex = isMultiCurrency ? 16 : 14;
 	}   //  loadBPartner
 	
 	public String writeOff(int row, int col, boolean isInvoice, IMiniTable payment, IMiniTable invoice, boolean isAutoWriteOff)
@@ -843,7 +960,7 @@ public class Allocation
 	/**************************************************************************
 	 *  Save Data
 	 */
-	public String saveData(int m_WindowNo, Object date, IMiniTable payment, IMiniTable invoice, String trxName) {
+	public String saveData(int m_WindowNo, Object date, IMiniTable payment, IMiniTable invoice, Integer convType, BigDecimal currencyRate, boolean multiCurrency, String trxName) {
 		if (noInvoices + noPayments == 0)
 			return "";
 
@@ -856,7 +973,15 @@ public class Allocation
 		int orderId = 0;
 		int cashLineId = 0;
 		Timestamp DateTrx = (Timestamp)date;
-		//
+		int paySelectionId = 0;
+
+		//Openup. Nicolas Sarlabos. 02/01/2020. #13466.
+		if(poFrom != null){
+			if((poFrom.get_TableName()).toUpperCase().equalsIgnoreCase("C_PAYSELECTION"))
+				paySelectionId = poFrom.get_ID();
+		}//Fin 13466.
+
+		//int paySelectionId = Env.getContextAsInt(Env.getCtx(), m_WindowNo, "C_PaySelection_ID");//Openup. Nicolas Sarlabos. 02/01/2020. #13466.
 		if (orgId == 0) {
 			throw new AdempiereException("@Org0NotAllowed@");
 		}
@@ -897,6 +1022,16 @@ public class Allocation
 		//	Set Description
 		if (!Util.isEmpty(description))
 			alloc.setDescription(description);
+		//Openup. Nicolas Sarlabos. 02/01/2020. #13466.
+		if(paySelectionId > 0)
+			alloc.set_ValueOfColumn("C_PaySelection_ID", paySelectionId);
+		//Fin #13466.
+		//Solop. Nicolas Sarlabos. 26/04/2021. #15981.
+		if(multiCurrency){
+			alloc.set_ValueOfColumn("IsMultiCurrency", multiCurrency);
+			alloc.set_ValueOfColumn("C_ConversionType_ID", convType);
+			alloc.set_ValueOfColumn("CurrencyRate", currencyRate);
+		}//Fin #15981.
 		alloc.saveEx();
 		//	For all invoices
 		BigDecimal unmatchedApplied = Env.ZERO;
@@ -1038,4 +1173,34 @@ public class Allocation
 		//	Return
 		return Msg.parseTranslation(Env.getCtx(), "@C_AllocationHdr_ID@ @Created@: " + alloc.getDocumentNo());
 	}   //  saveData
+
+
+	/**
+	 * Obtiene la tasa de cambio segun parametros recibidos.
+	 * OpenUp. Nicolas Sarlabos. 24/07/2020. Issue #11926.
+	 * @param ctx
+	 * @param currencyFromID
+	 * @param currencyToID
+	 * @param date
+	 * @param conversionTypeID
+	 * @return
+	 */
+	public BigDecimal getCurrencyRate (Properties ctx, int currencyFromID, int currencyToID, Timestamp date, int conversionTypeID){
+
+		int schema_currency_id = new MAcctSchema(ctx, Env.getContextAsInt(ctx, "$C_AcctSchema_ID"), null).getC_Currency_ID();
+		int client_ID = Env.getContextAsInt(ctx, 0, 0, "AD_Client_ID");
+
+		BigDecimal rate = MConversionRate.getRate(currencyFromID, currencyToID, date, conversionTypeID, client_ID, 0);
+
+		if (currencyToID != schema_currency_id) {
+			if (rate != null && rate.compareTo(Env.ZERO) > 0){
+				rate = Env.ONE.divide(rate, 3, BigDecimal.ROUND_HALF_UP);
+			} else rate = null;
+		}
+
+		if (rate != null) {
+			return rate;
+		} else return Env.ZERO;
+	}
+
 }
