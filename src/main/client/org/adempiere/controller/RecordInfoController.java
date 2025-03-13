@@ -183,8 +183,6 @@ public class RecordInfoController {
 			else
 				log.info("dynInit - Invalid Record_ID=" + dse.Record_ID);
 
-			UUID = (String) dse.UUID;
-
 		}
 		//	Valid Record Identifier
 		if (m_Record_ID <= 0 && UUID == null)
