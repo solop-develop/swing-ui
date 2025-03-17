@@ -163,7 +163,8 @@ sourceSets {
             include 'org/compiere/plaf/sounds/**.*'
             include 'org/compiere/**.*'
             include 'org/compiere/db/**.*'
-            include 'org/compiere/install/**.*'  
+            include 'org/compiere/install/**.*'
+            include 'org/adempiere/legacy/apache/ecs/ecs.properties'
         }
     }
 }
