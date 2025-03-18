@@ -394,6 +394,7 @@ public abstract class SmallViewController implements SmallViewEditable, Vetoable
 			GridFieldVO voBase_To = createVO(field, true, windowNo);
 			GridField gField_To = new GridField(voBase_To);
 			//	
+			fieldsInfoOnly.put(gField_To.getColumnNameAlias(), field.isInfoOnly()); 
 			fieldsTo.add(gField_To);
 		} else {
 			fieldsTo.add (null);
