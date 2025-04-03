@@ -15,3 +15,28 @@ include "adempiere-solop:request"
 project(':adempiere-solop:request').projectDir = file('../adempiere-solop/request')
 include "adempiere-solop:solop_libs"
 project(':adempiere-solop:solop_libs').projectDir = file('../adempiere-solop/solop_libs')
+
+include "time-control"
+project(':time-control').projectDir = file('../time-control')
+include "display-definition"
+project(':display-definition').projectDir = file('../display-definition')
+include "electronic-invoicing"
+project(':electronic-invoicing').projectDir = file('../electronic-invoicing')
+include "cloud-solop-notifier"
+project(':cloud-solop-notifier').projectDir = file('../cloud-solop-notifier')
+include "shopping-admin-connection"
+project(':shopping-admin-connection').projectDir = file('../shopping-admin-connection')
+include "payment-processor"
+project(':payment-processor').projectDir = file('../payment-processor')
+include "warehouse-light"
+project(':warehouse-light').projectDir = file('../warehouse-light')
+include "distribution-light"
+project(':distribution-light').projectDir = file('../distribution-light')
+include "wms-light"
+project(':wms-light').projectDir = file('../wms-light')
+include "additional-reports"
+project(':additional-reports').projectDir = file('../additional-reports')
+include "intercompany-management"
+project(':intercompany-management').projectDir = file('../intercompany-management')
+include "delivery-management-service"
+project(':delivery-management-service').projectDir = file('../delivery-management-service')

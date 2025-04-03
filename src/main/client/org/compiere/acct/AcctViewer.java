@@ -815,7 +815,7 @@ public class AcctViewer extends CFrame
 					"elementtype = 'X1' ", 
 					null)
 			.setClient_ID()
-			.firstOnly();
+			.first();
 			String tableName = et.getAD_Column().getAD_Table().getTableName();
 			String lookupcolumnname = tableName + "_ID";
 			lookupColumn = lookupcolumnname;
@@ -827,7 +827,7 @@ public class AcctViewer extends CFrame
 					"elementtype = 'X2' ", 
 					null)
 			.setClient_ID()
-			.firstOnly();
+			.first();
 			String tableName = et.getAD_Column().getAD_Table().getTableName();
 			String lookupcolumnname = tableName + "_ID";
 			lookupColumn = lookupcolumnname;

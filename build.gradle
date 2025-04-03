@@ -48,6 +48,19 @@ dependencies {
     implementation project(':adempiere-solop:point-of-sales')
     implementation project(':adempiere-solop:production')
     implementation project(':adempiere-solop:request')
+    implementation project(':time-control')
+    implementation project(':electronic-invoicing')
+    implementation project(':display-definition')
+    implementation project(':cloud-solop-notifier')
+    implementation project(':shopping-admin-connection')
+    implementation project(':payment-processor')
+    implementation project(':warehouse-light')
+    implementation project(':distribution-light')
+    implementation project(':wms-light')
+    implementation project(':additional-reports')
+    implementation project(':intercompany-management')
+    implementation project(':delivery-management-service')
+    implementation 'javax.xml.soap:javax.xml.soap-api:1.4.0'
 //    implementation project(':adempiere-solop:solop_libs')
 	//	ADempiere Core
 //	implementation "${baseGroupId}:base:${baseVersion}"

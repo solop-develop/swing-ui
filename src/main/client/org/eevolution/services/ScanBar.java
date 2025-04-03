@@ -415,7 +415,7 @@ public abstract class ScanBar {
 
 			MProduct product = new Query(Env.getCtx(), I_M_Product.Table_Name,
 					"Value = ? ", null).setClient_ID().setParameters(value)
-					.firstOnly();
+					.first();
 			String desc = null;
 
 			poLine = tableLine.getPO(id, null);
@@ -524,7 +524,7 @@ public abstract class ScanBar {
 		
 		return new Query(Env.getCtx(),  tableLine.Table_Name,
 				whereClause.toString(), null).setClient_ID()
-				.setParameters(parameters).firstOnly();
+				.setParameters(parameters).first();
 	}
 
 	protected MAttributeSetInstance getAttributeSetInstance(MProduct product,
